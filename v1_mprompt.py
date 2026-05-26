@@ -51,20 +51,58 @@ import random
 
 import csv
 import sys
-class Logger(object):
-    def __init__(self, filename='default.log', stream=sys.stdout):
-        self.terminal = stream
-        self.log = open(filename, 'w')
- 
-    def write(self, message):
-        self.terminal.write(message)
-        self.log.write(message)
- 
+
+# Configure Python logging to write to the console; the logfile is added once
+# the model config is known so the filename can reflect the active setup.
+handlers = [logging.StreamHandler(sys.__stdout__)]
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s %(levelname)s: %(message)s',
+    handlers=handlers,
+)
+
+class StreamToLogger(object):
+    """Redirect writes to a logger instance."""
+    def __init__(self, logger, level=logging.INFO):
+        self.logger = logger
+        self.level = level
+
+    def write(self, buf):
+        if buf.strip() != "":
+            for line in buf.rstrip().splitlines():
+                self.logger.log(self.level, line.rstrip())
+
     def flush(self):
         pass
 
-# Redirect the console output results to a.log file.
-sys.stdout = Logger('output_v1_mprompt_25train_PGD_16_200_A.log', sys.stdout)
+# Redirect stdout and stderr so prints and tracebacks go to the logging system
+sys.stdout = StreamToLogger(logging.getLogger(), logging.INFO)
+sys.stderr = StreamToLogger(logging.getLogger(), logging.ERROR)
+
+
+def build_logfile_name(model_cfg, args, train_num):
+    arch = str(getattr(model_cfg, 'arch', 'model')).replace('/', '_')
+    model_type = str(getattr(model_cfg, 'model_type', 'unknown')).replace('/', '_')
+    ckpt = getattr(model_cfg, 'ckpt', None) or getattr(model_cfg, 'llama_model', None) or ''
+    ckpt_name = os.path.splitext(os.path.basename(str(ckpt)))[0] or 'checkpoint'
+    cfg_name = os.path.splitext(os.path.basename(str(getattr(args, 'cfg_path', 'config'))))[0]
+    gpu_id = getattr(args, 'gpu_id', 0)
+    return f"output_v1_mprompt_{arch}_{model_type}_{ckpt_name}_{cfg_name}_gpu{gpu_id}_train{train_num}.log"
+
+
+def build_run_tag(model_cfg, args, train_num):
+    arch = str(getattr(model_cfg, 'arch', 'model')).replace('/', '_')
+    model_type = str(getattr(model_cfg, 'model_type', 'unknown')).replace('/', '_')
+    ckpt = getattr(model_cfg, 'ckpt', None) or getattr(model_cfg, 'llama_model', None) or ''
+    ckpt_name = os.path.splitext(os.path.basename(str(ckpt)))[0] or 'checkpoint'
+    cfg_name = os.path.splitext(os.path.basename(str(getattr(args, 'cfg_path', 'config'))))[0]
+    gpu_id = getattr(args, 'gpu_id', 0)
+    return f"{arch}_{model_type}_{ckpt_name}_{cfg_name}_gpu{gpu_id}_train{train_num}"
+
+
+def build_result_csv_name(run_tag, split, attack_mode, attack_power, attack_iters, round_name):
+    return f"rst_v1llama_img_normal_mprompt_{run_tag}_{split}_goal_output_{attack_mode}_{attack_power}_{attack_iters}_{round_name}.csv"
+
 #device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 device = torch.device('cuda:0')
 
@@ -119,6 +157,31 @@ class MiniGPT(nn.Module):
         args = parse_args()
         cfg = Config(args)
 
+        # Build a descriptive logfile name from the model config and switch
+        try:
+            model_cfg = cfg.model_cfg
+            self.run_tag = build_run_tag(model_cfg, args, train_num)
+            new_logfile = build_logfile_name(model_cfg, args, train_num)
+
+            root_logger = logging.getLogger()
+            # remove existing FileHandler(s)
+            for h in list(root_logger.handlers):
+                if isinstance(h, logging.FileHandler):
+                    root_logger.removeHandler(h)
+                    try:
+                        h.close()
+                    except Exception:
+                        pass
+
+            # add new file handler
+            fh = logging.FileHandler(new_logfile)
+            fh.setLevel(logging.INFO)
+            fh.setFormatter(logging.Formatter('%(asctime)s %(levelname)s: %(message)s'))
+            root_logger.addHandler(fh)
+            logging.info(f"Logging to {new_logfile}")
+        except Exception:
+            logging.exception("Failed to set dynamic logfile name, continuing with default logfile")
+
         device = 'cuda:{}'.format(args.gpu_id)
 
         model_config = cfg.model_cfg
@@ -151,6 +214,9 @@ class MiniGPT(nn.Module):
         conv.append_message(conv.roles[0], "<Img><ImageHere></Img>")
         image = torch.load('./images/vis_processed_merlion_minigpt4_llama.pt')
         image = image.to(self.device)
+
+        # FIX: encode the reference image once and reuse the embedding for label precomputation.
+        # This ensures the visual token count used in inputs_tokens matches the real embedding size.
         image_emb, _ = self.model.encode_img(image)
         image_list = []
         image_list.append(image_emb)
@@ -220,6 +286,9 @@ class MiniGPT(nn.Module):
             conv_.append_message(conv_.roles[1], target)
             self.conv.append(conv_)
 
+            # FIX: pass the real image_list so get_context_emb uses the actual visual token count
+            # when building inputs_tokens. Previously a hardcoded 64 was used, which mismatched
+            # the real embedding size produced by encode_img, causing the batch size error.
             embs, inputs_tokens = self.get_context_emb(conv_, image_list, True)
 
             target_len_ = inputs_tokens.shape[1]
@@ -245,11 +314,18 @@ class MiniGPT(nn.Module):
             # only add bos to the first seg
             for i, seg in enumerate(prompt_segs)
         ]
-        
+
+        # FIX: derive the visual token count dynamically from the actual image embedding
+        # instead of hardcoding 64. This ensures inputs_tokens and the mixed embeddings
+        # always have consistent sequence lengths, preventing the batch size mismatch in
+        # CrossEntropyLoss (shift_logits vs shift_labels).
+        num_visual_tokens = img_list[0].shape[1]
+
         inputs_tokens = []
         inputs_tokens.append(seg_tokens[0])
-        # inputs_tokens.append( torch.from_numpy(np.ones((1,32))*(-200)).to(self.device) ) #for 224*224 num_Vtokens=32
-        inputs_tokens.append(torch.from_numpy(np.ones((1, 64)) * (-200)).to(self.device))  # for 448*448 num_Vtokens=256
+        inputs_tokens.append(
+            torch.from_numpy(np.ones((1, num_visual_tokens)) * (-200)).to(self.device)
+        )
         inputs_tokens.append(seg_tokens[1])
 
         dtype = inputs_tokens[0].dtype
@@ -267,24 +343,6 @@ class MiniGPT(nn.Module):
         Overridden.
 
         """
-
-        '''
-        prompt, image_position, torch_image = process_image(self.prompt, image=image)
-
-        torch_image = torch_image.to(next(self.model.parameters()).dtype).to(next(self.model.parameters()).device)
-
-
-        #tokens = self.seq[:self.mask_position + 2].unsqueeze(0)
-        #tokens = self.labels[:self.mask_position + 2 + 1].unsqueeze(0)
-        #tokens = self.labels[:self.mask_position + 2 + 5].unsqueeze(0)
-        tokens = self.labels[:self.mask_position + 2 + 6*3*2].unsqueeze(0)
-        #print(tokens)
-
-        #logits = self.model(input_ids=tokens, image=image, pre_image=pre_image)[0]
-        logits = self.model(input_ids=tokens, image=torch_image, pre_image=self.pre_image)[0]
-        dtype = logits.dtype
-        lm_logits = logits.to(torch.float32)
-        '''
 
         images = inp[0]
         k = inp[1]
@@ -328,6 +386,14 @@ class MiniGPT(nn.Module):
             shift_logits_ = lm_logits[..., :-1, :].contiguous()
             shift_logits.append(shift_logits_)
 
+            # Sanity check — both dims must match after shifting
+            assert shift_logits_.shape[1] == shift_labels_.shape[1], (
+                f"Sequence length mismatch after shift: "
+                f"logits={shift_logits_.shape[1]}, labels={shift_labels_.shape[1]}. "
+                f"This usually means the visual token count changed between __init__ and forward. "
+                f"Check that encode_img always returns the same number of tokens."
+            )
+
             loss += loss_fct(shift_logits_.view(-1, shift_logits_.size(-1)), shift_labels_.view(-1))
 
         return -loss
@@ -357,7 +423,7 @@ def my_norm(image):
 
 def denorm(image):
     mean = (0.48145466, 0.4578275, 0.40821073)
-    std = (0.26862954, 0.26130258, 0.27577711)
+    std = (0.26862954, 0.26130658, 0.27577711)
     mean = torch.tensor(mean).to(device)
     std = torch.tensor(std).to(device)
 
@@ -434,6 +500,7 @@ save_img_path = "MiniGPT4_llama_Mprompt_adv_img/train_size_" + str(
     attack_power) + "_" + str(attack_iters) + "_iters_pure_noise_" + round + ".png"
 adv_image = denorm(adv_img[0])
 save_img = (adv_image[0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
+os.makedirs(os.path.dirname(save_img_path), exist_ok=True)
 save_image(save_img, save_img_path)
 print("+++++++++++++++++++++++++++++++++++++++++++++++Finish generating mprompt adv image+++++++++++++++++++++++++++++++++++++++++++")
 image_emb, _ = model.model.encode_img(adv_img[0])  # NOBUG
@@ -488,7 +555,8 @@ for p in range(model.train_num):
     print(output_text)  # output_token.cpu().numpy()
     out_csv.append(output_text)
     #print('-------------------------Finishing response Goal:' + str(model.train_goal_index[p] + 1) + '----------------------------------------')
-with open('rst_v1llama_img_normal_mprompt_' + str(model.train_num) + '_Train_goal_output_' +attack_mode+'_'+str(attack_power)+'_'+str(attack_iters)+'_'+round+ '.csv', 'w', encoding='utf-8', newline='') as f:
+train_csv_name = build_result_csv_name(model.run_tag, 'Train', attack_mode, attack_power, attack_iters, round)
+with open(train_csv_name, 'w', encoding='utf-8', newline='') as f:
     write = csv.writer(f)
     rr = 0
     for data in out_csv:
@@ -548,7 +616,8 @@ for p in range(model.test_num):
     print(output_text)  # output_token.cpu().numpy()
     test_csv.append(output_text)
     #print('---------------------------------Finishing response Goal: ' + str(model.test_goal_index[p] + 1) + '------------------------------------------------')
-with open('rst_v1llama_img_normal_mprompt_' + str(model.train_num) + '_Test_goal_output_' +attack_mode+'_'+str(attack_power)+'_'+str(attack_iters)+'_'+round+ '.csv', 'w', encoding='utf-8', newline='') as f:
+test_csv_name = build_result_csv_name(model.run_tag, 'Test', attack_mode, attack_power, attack_iters, round)
+with open(test_csv_name, 'w', encoding='utf-8', newline='') as f:
     write = csv.writer(f)
     rr = 0
     for data in test_csv:

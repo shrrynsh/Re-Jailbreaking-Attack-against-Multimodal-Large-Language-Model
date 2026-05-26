@@ -171,21 +171,47 @@ class BaseModel(nn.Module):
     def init_llm(cls, llama_model_path, low_resource=False, low_res_device=0, lora_r=0,
                  lora_target_modules=["q_proj","v_proj"], **lora_kargs):
         logging.info('Loading LLAMA')
-        llama_tokenizer = LlamaTokenizer.from_pretrained(llama_model_path, use_fast=False)
+        # Prefer loading tokenizer/model from local files first to avoid
+        # transformers treating absolute paths as HF repo ids.
+        abs_llama_path = get_abs_path(llama_model_path)
+        try:
+            llama_tokenizer = LlamaTokenizer.from_pretrained(abs_llama_path, use_fast=False, local_files_only=True)
+        except Exception:
+            # Fallback to normal behavior (allow remote lookup if needed)
+            logging.info("Local tokenizer not found, falling back to hub lookup for %s", llama_model_path)
+            llama_tokenizer = LlamaTokenizer.from_pretrained(llama_model_path, use_fast=False)
         llama_tokenizer.pad_token = "$$"
 
         if low_resource:
-            llama_model = LlamaForCausalLM.from_pretrained(
-                llama_model_path,
-                torch_dtype=torch.float16,
-                load_in_8bit=True,
-                device_map={'': low_res_device}
-            )
+            try:
+                llama_model = LlamaForCausalLM.from_pretrained(
+                    abs_llama_path,
+                    torch_dtype=torch.float16,
+                    load_in_8bit=True,
+                    device_map={'': low_res_device},
+                    local_files_only=True,
+                )
+            except Exception:
+                logging.info("Local Llama model not found, falling back to hub lookup for %s", llama_model_path)
+                llama_model = LlamaForCausalLM.from_pretrained(
+                    llama_model_path,
+                    torch_dtype=torch.float16,
+                    load_in_8bit=True,
+                    device_map={'': low_res_device},
+                )
         else:
-            llama_model = LlamaForCausalLM.from_pretrained(
-                llama_model_path,
-                torch_dtype=torch.float16,
-            )
+            try:
+                llama_model = LlamaForCausalLM.from_pretrained(
+                    abs_llama_path,
+                    torch_dtype=torch.float16,
+                    local_files_only=True,
+                )
+            except Exception:
+                logging.info("Local Llama model not found, falling back to hub lookup for %s", llama_model_path)
+                llama_model = LlamaForCausalLM.from_pretrained(
+                    llama_model_path,
+                    torch_dtype=torch.float16,
+                )
 
         if lora_r > 0:
             llama_model = prepare_model_for_int8_training(llama_model)
