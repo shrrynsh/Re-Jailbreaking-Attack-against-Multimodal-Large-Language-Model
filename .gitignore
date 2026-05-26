@@ -1,0 +1,20 @@
+# Python caches
+__pycache__/
+*.py[cod]
+
+# Generated logs and evaluation outputs
+output_v1_mprompt*.log
+rst_v1llama_img_normal_mprompt_*.csv
+
+# Generated adversarial image previews
+MiniGPT4_llama_Mprompt_adv_img/*.png
+
+# Local scratch artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Nested checkpoint repos downloaded locally
+ckpts/llama2-7b/
+ckpts/vicuna7b/
