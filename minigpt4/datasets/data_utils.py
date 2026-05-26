@@ -96,12 +96,12 @@ def prepare_sample(samples, cuda_enabled=True):
     return samples
 
 
-def reorg_datasets_by_split(datasets):
+def reorg_datasets_by_split(datasets, batch_sizes):
     """
     Organizes datasets by split.
 
     Args:
-        datasets: dict of torch.minigpt_utils.data.Dataset objects by name.
+        datasets: dict of torch.utils.data.Dataset objects by name.
 
     Returns:
         Dict of datasets by split {split_name: List[Datasets]}.
@@ -110,16 +110,19 @@ def reorg_datasets_by_split(datasets):
     #     return datasets[list(datasets.keys())[0]]
     # else:
     reorg_datasets = dict()
+    reorg_batch_sizes = dict()
 
     # reorganize by split
-    for _, dataset in datasets.items():
+    for dataset_name, dataset in datasets.items():
         for split_name, dataset_split in dataset.items():
             if split_name not in reorg_datasets:
                 reorg_datasets[split_name] = [dataset_split]
+                reorg_batch_sizes[split_name] = [batch_sizes[dataset_name]]
             else:
                 reorg_datasets[split_name].append(dataset_split)
+                reorg_batch_sizes[split_name].append(batch_sizes[dataset_name])
 
-    return reorg_datasets
+    return reorg_datasets, reorg_batch_sizes
 
 
 def concat_datasets(datasets):
@@ -134,7 +137,7 @@ def concat_datasets(datasets):
     datasets.
 
     Args:
-        datasets: dict of torch.minigpt_utils.data.Dataset objects by split.
+        datasets: dict of torch.utils.data.Dataset objects by split.
 
     Returns:
         Dict of concatenated datasets by split, "train" is the concatenation of multiple datasets,
