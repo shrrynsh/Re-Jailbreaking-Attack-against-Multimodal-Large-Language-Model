@@ -71,7 +71,22 @@ class Logger(object):
         pass
 
 # Redirect the console output results to a.log file.
-sys.stdout = Logger('output_v1_mprompt_img_suffix_25train_PGD_16_200_A.log', sys.stdout)
+
+
+def build_model_tag(model_config):
+    tag_parts = [getattr(model_config, 'arch', None), getattr(model_config, 'model_type', None)]
+    tag = '_'.join(part for part in tag_parts if part)
+    return tag.replace('/', '_').replace(' ', '_')
+
+
+def load_or_build_llama2_dict_embeddings(model, cache_path='./dataset/llama2_dict_embeddings.pt'):
+    if os.path.exists(cache_path):
+        return torch.load(cache_path, map_location=device)
+
+    print(f'Missing {cache_path}; building it from the loaded Llama tokenizer embeddings.')
+    input_embeddings = model.model.llama_model.get_input_embeddings().weight.detach().to(device)
+    torch.save(input_embeddings, cache_path)
+    return input_embeddings
 
 device = torch.device('cuda:0')
 
@@ -128,6 +143,11 @@ class MiniGPT(nn.Module):
         device = 'cuda:{}'.format(args.gpu_id)
 
         model_config = cfg.model_cfg
+        self.model_tag = build_model_tag(model_config)
+        sys.stdout = Logger(
+            f'output_{self.model_tag}_v1_mprompt_img_suffix_{train_num}train_{attack_mode}_{attack_power}_{attack_iters}_{round_tag}.log',
+            sys.stdout,
+        )
         model_config.device_8bit = args.gpu_id
         model_cls = registry.get_model_class(model_config.arch)
         self.model = model_cls.from_config(model_config).to(device)
@@ -313,7 +333,7 @@ class MiniGPT(nn.Module):
             if current_max_len - max_length > 0:
                 print('Warning: The number of tokens in current conversation exceeds the max length. '
                       'The model will not see the contexts outside the range.')
-            begin_idx = max(0, current_max_len - max_length)
+                begin_idx = max(0, current_max_len - max_length)
             embs = embs[:, begin_idx:]
 
             outputs = self.model.llama_model(inputs_embeds=embs)
@@ -407,11 +427,10 @@ train_num = 25
 attack_mode = 'PGD'
 attack_power = 16
 attack_iters = 200
-round = 'A'
-llama2_dict_emb = torch.load('./dataset/llama2_dict_embeddings.pt')
-llama2_dict_emb = llama2_dict_emb.to(device)
+round_tag = 'A'
 model = MiniGPT(train_num)
 model = model.eval()
+llama2_dict_emb = load_or_build_llama2_dict_embeddings(model)
 print("train_goal_index:", model.train_goal_index)
 if attack_mode == 'PGD':
     attack = PGD(model, eps=attack_power / 255, alpha=1 / 255, steps=attack_iters, nprompt=model.train_num,
@@ -429,9 +448,7 @@ image = torch.zeros(1, 3, 224, 224).to(device)
 images = []
 images.append(image)
 adv_img = attack(images, model.shift_labels)
-save_img_path = "MiniGPT4_llama_Img_Suffix_Mprompt_adv_img/train_size_" + str(
-    model.train_num) + '_' + attack_mode + "_" + str(
-    attack_power) + "_" + str(attack_iters) + "_iters_pure_noise_" + round + ".png"
+save_img_path = f"MiniGPT4_llama_Img_Suffix_Mprompt_adv_img/train_size_{model.train_num}_{attack_mode}_{attack_power}_{attack_iters}_iters_pure_noise_{round_tag}.png"
 adv_image = denorm(adv_img[0])
 save_img = (adv_image[0].permute(1, 2, 0).cpu().numpy() * 255).astype(np.uint8)
 save_image(save_img, save_img_path)
@@ -569,20 +586,20 @@ for p in range(model.train_num):
      print(output_text)  # output_token.cpu().numpy()
      out_csv.append(output_text)
      #print('-------------------------Finishing response Goal:' + str(model.train_goal_index[p] + 1) + '----------------------------------------')
- with open('rst_v1llama_img_suffix_mprompt_' + str(model.train_num) + '_Train_goal_output_' +attack_mode+'_'+str(attack_power)+'_'+str(attack_iters)+'_'+round+ '.csv', 'w', encoding='utf-8', newline='') as f:
-     write = csv.writer(f)
-     rr = 0
-     for data in out_csv:
-         write.writerow(["===============" + str(rr) + "==============="])
-         write.writerow([model.mprompt[rr]])
-         write.writerow(["Jailborken:"+ str(train_total_jb[rr])+" ;EM: " + str(train_total_em[rr])])
-         write.writerow([data])
-         rr += 1
- print('\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!Finishing validating the training set!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
- print('\n#############################################################################Start validating the Testing set####################################################################################')
- test_csv = []
- test_total_jb, test_total_em = [], []
- for p in range(model.test_num):
+     with open(f"rst_{model.model_tag}_v1llama_img_suffix_mprompt_{model.train_num}_Train_goal_output_{attack_mode}_{attack_power}_{attack_iters}_{round_tag}.csv", 'w', encoding='utf-8', newline='') as f:
+         write = csv.writer(f)
+         rr = 0
+         for data in out_csv:
+             write.writerow(["===============" + str(rr) + "==============="])
+             write.writerow([model.mprompt[rr]])
+             write.writerow(["Jailborken:"+ str(train_total_jb[rr])+" ;EM: " + str(train_total_em[rr])])
+             write.writerow([data])
+             rr += 1
+print('\n!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!Finishing validating the training set!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!')
+print('\n#############################################################################Start validating the Testing set####################################################################################')
+test_csv = []
+test_total_jb, test_total_em = [], []
+for p in range(model.test_num):
      print('-------------------------Response Goal ' + str(model.test_goal_index[p] + 1) + ':' + model.test_goal[
          p] + '----------------------------------------')
 
@@ -604,7 +621,7 @@ for p in range(model.train_num):
      if current_max_len - max_length > 0:
          print('Warning: The number of tokens in current conversation exceeds the max length. '
                'The model will not see the contexts outside the range.')
-    begin_idx = max(0, current_max_len - max_length)
+     begin_idx = max(0, current_max_len - max_length)
      embs = embs[:, begin_idx:]
 
      generation_dict = dict(
@@ -628,15 +645,15 @@ for p in range(model.train_num):
      print(output_text)  # output_token.cpu().numpy()
      test_csv.append(output_text)
      #print('---------------------------------Finishing response Goal: ' + str(model.test_goal_index[p] + 1) + '------------------------------------------------')
- with open('rst_v1llama_img_suffix_mprompt_' + str(model.train_num) + '_Test_goal_output_' +attack_mode+'_'+str(attack_power)+'_'+str(attack_iters)+'_'+round+ '.csv', 'w', encoding='utf-8', newline='') as f:
-     write = csv.writer(f)
-     rr = 0
-     for data in test_csv:
-         write.writerow(["===============" + str(rr) + "==============="])
-         write.writerow([model.test_goal[rr]])
-         write.writerow(["Jailborken:"+ str(test_total_jb[rr])+" ;EM: " + str(test_total_em[rr])])
-         write.writerow([data])
-         rr += 1
- print(f"Jailbroken {sum(train_total_jb)}/{model.train_num} | EM {sum(train_total_em)}/{model.train_num}")
- print(f"Jailbroken {sum(test_total_jb)}/{model.test_num} | EM {sum(test_total_em)}/{model.test_num}")
- print('\n#############################################################################Finishing validating the Testing set#############################################################################')
+     with open(f"rst_{model.model_tag}_v1llama_img_suffix_mprompt_{model.train_num}_Test_goal_output_{attack_mode}_{attack_power}_{attack_iters}_{round_tag}.csv", 'w', encoding='utf-8', newline='') as f:
+         write = csv.writer(f)
+         rr = 0
+         for data in test_csv:
+             write.writerow(["===============" + str(rr) + "==============="])
+             write.writerow([model.test_goal[rr]])
+             write.writerow(["Jailborken:"+ str(test_total_jb[rr])+" ;EM: " + str(test_total_em[rr])])
+             write.writerow([data])
+             rr += 1
+print(f"Jailbroken {sum(train_total_jb)}/{model.train_num} | EM {sum(train_total_em)}/{model.train_num}")
+print(f"Jailbroken {sum(test_total_jb)}/{model.test_num} | EM {sum(test_total_em)}/{model.test_num}")
+print('\n#############################################################################Finishing validating the Testing set#############################################################################')
