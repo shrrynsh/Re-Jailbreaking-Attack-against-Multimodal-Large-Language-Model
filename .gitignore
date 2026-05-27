@@ -18,3 +18,4 @@ __pycache__/
 # Nested checkpoint repos downloaded locally
 ckpts/llama2-7b/
 ckpts/vicuna7b/
+dataset/llama2_dict_embeddings.pt
