@@ -174,18 +174,21 @@ class BaseModel(nn.Module):
         llama_tokenizer = LlamaTokenizer.from_pretrained(llama_model_path, use_fast=False)
         llama_tokenizer.pad_token = "$$"
 
+        try:
+            from transformers import BitsAndBytesConfig
+        except ImportError:
+            BitsAndBytesConfig = None
+
+        llama_load_kwargs = dict(torch_dtype=torch.float16)
         if low_resource:
-            llama_model = LlamaForCausalLM.from_pretrained(
-                llama_model_path,
-                torch_dtype=torch.float16,
-                load_in_8bit=True,
-                device_map={'': low_res_device}
-            )
+            llama_load_kwargs["device_map"] = {'': low_res_device}
+            if BitsAndBytesConfig is not None:
+                llama_load_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+
+        if low_resource:
+            llama_model = LlamaForCausalLM.from_pretrained(llama_model_path, **llama_load_kwargs)
         else:
-            llama_model = LlamaForCausalLM.from_pretrained(
-                llama_model_path,
-                torch_dtype=torch.float16,
-            )
+            llama_model = LlamaForCausalLM.from_pretrained(llama_model_path, **llama_load_kwargs)
 
         if lora_r > 0:
             llama_model = prepare_model_for_kbit_training(llama_model)

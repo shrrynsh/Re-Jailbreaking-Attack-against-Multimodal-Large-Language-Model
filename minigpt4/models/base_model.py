@@ -182,35 +182,42 @@ class BaseModel(nn.Module):
             llama_tokenizer = LlamaTokenizer.from_pretrained(llama_model_path, use_fast=False)
         llama_tokenizer.pad_token = "$$"
 
+        try:
+            from transformers import BitsAndBytesConfig
+        except ImportError:
+            BitsAndBytesConfig = None
+
+        llama_load_kwargs = dict(torch_dtype=torch.float16)
+        if low_resource:
+            llama_load_kwargs["device_map"] = {'': low_res_device}
+            if BitsAndBytesConfig is not None:
+                llama_load_kwargs["quantization_config"] = BitsAndBytesConfig(load_in_8bit=True)
+
         if low_resource:
             try:
                 llama_model = LlamaForCausalLM.from_pretrained(
                     abs_llama_path,
-                    torch_dtype=torch.float16,
-                    load_in_8bit=True,
-                    device_map={'': low_res_device},
+                    **llama_load_kwargs,
                     local_files_only=True,
                 )
             except Exception:
                 logging.info("Local Llama model not found, falling back to hub lookup for %s", llama_model_path)
                 llama_model = LlamaForCausalLM.from_pretrained(
                     llama_model_path,
-                    torch_dtype=torch.float16,
-                    load_in_8bit=True,
-                    device_map={'': low_res_device},
+                    **llama_load_kwargs,
                 )
         else:
             try:
                 llama_model = LlamaForCausalLM.from_pretrained(
                     abs_llama_path,
-                    torch_dtype=torch.float16,
+                    **llama_load_kwargs,
                     local_files_only=True,
                 )
             except Exception:
                 logging.info("Local Llama model not found, falling back to hub lookup for %s", llama_model_path)
                 llama_model = LlamaForCausalLM.from_pretrained(
                     llama_model_path,
-                    torch_dtype=torch.float16,
+                    **llama_load_kwargs,
                 )
 
         if lora_r > 0:
