@@ -330,6 +330,7 @@ class MiniGPT(nn.Module):
             max_length = 2000
 
             current_max_len = embs.shape[1] + max_new_tokens
+            begin_idx = 0
             if current_max_len - max_length > 0:
                 print('Warning: The number of tokens in current conversation exceeds the max length. '
                       'The model will not see the contexts outside the range.')
