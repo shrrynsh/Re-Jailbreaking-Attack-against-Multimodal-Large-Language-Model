@@ -265,10 +265,11 @@ class MiniGPT(nn.Module):
             for i, seg in enumerate(prompt_segs)
         ]
 
+        num_visual_tokens = img_list[0].shape[1]
+
         inputs_tokens = []
         inputs_tokens.append(seg_tokens[0])
-        # inputs_tokens.append( torch.from_numpy(np.ones((1,32))*(-200)).to(device) ) #for 224*224 num_Vtokens=32
-        inputs_tokens.append(torch.from_numpy(np.ones((1, 64)) * (-200)).to(self.device))  # for 448*448 num_Vtokens=256
+        inputs_tokens.append(torch.from_numpy(np.ones((1, num_visual_tokens)) * (-200)).to(self.device))
         inputs_tokens.append(seg_tokens[1])
 
         dtype = inputs_tokens[0].dtype
@@ -494,7 +495,8 @@ dot_products = dot_products.squeeze(0)
 ########################Plan B######################################
 top_20_similar_words_indices = dot_products.argsort(dim=-1)[:, -20:]
 candidate = range(20)
-for i in range(64):
+num_visual_tokens = dot_products.shape[0]
+for i in range(num_visual_tokens):
     word_indices_2[0, i] = top_20_similar_words_indices[i, random.choice(candidate)]
     word_indices_3[0, i] = top_20_similar_words_indices[i, random.choice(candidate)]
     word_indices_4[0, i] = top_20_similar_words_indices[i, random.choice(candidate)]
