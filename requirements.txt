@@ -1,0 +1,50 @@
+# Core runtime
+torch==2.0.0; python_version < "3.12"
+torch>=2.2.0; python_version >= "3.12"
+torchaudio; python_version < "3.12"
+torchaudio>=2.2.0; python_version >= "3.12"
+torchvision; python_version < "3.12"
+torchvision>=0.17.0; python_version >= "3.12"
+numpy
+pandas
+scipy
+requests
+Pillow
+datasets>=2.19.2
+nltk
+packaging
+sentencepiece
+
+# MiniGPT-4 / LLaMA / HF stack
+huggingface-hub>=0.34.0
+matplotlib>=3.8.4
+psutil==5.9.4
+iopath
+PyYAML==6.0; python_version < "3.12"
+PyYAML>=6.0.1; python_version >= "3.12"
+regex==2022.10.31
+tokenizers==0.13.2; python_version < "3.12"
+tokenizers>=0.20.0; python_version >= "3.12"
+tqdm==4.64.1
+transformers==4.30.0; python_version < "3.12"
+transformers>=4.41.0; python_version >= "3.12"
+timm==0.6.13
+webdataset==0.2.48
+omegaconf==2.3.0
+opencv-python==4.7.0.72; python_version < "3.12"
+opencv-python>=4.10.0.84; python_version >= "3.12"
+decord>=0.6.0
+peft==0.2.0; python_version < "3.12"
+peft>=0.11.1; python_version >= "3.12"
+sentence-transformers
+gradio==3.47.1; python_version < "3.12"
+gradio>=4.44.0; python_version >= "3.12"
+accelerate==0.20.3; python_version < "3.12"
+accelerate>=0.31.0; python_version >= "3.12"
+bitsandbytes==0.37.0; python_version < "3.12"
+bitsandbytes>=0.43.1; python_version >= "3.12"
+scikit-image
+visual-genome
+wandb
+fschat==0.2.23; python_version < "3.12"
+fschat>=0.2.36; python_version >= "3.12"
